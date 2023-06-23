@@ -15,8 +15,8 @@ export default defineNuxtConfig({
     '/api/**': { cors: true },
     // Redirects legacy urls
     '/parent/a': { redirect: '/parent/b' }
+  },
+  nitro: {
+    preset: './server/nitro/preset',
   }
 })
-
-
-

@@ -11,7 +11,8 @@ export default {
   stacks(app) {
     app.stack(function Site({ stack }) {
       const site = new NuxtSite(stack, "site", {
-        path: "nuxt-app/"
+        path: "nuxt-app/",
+        edge: true,
       });
 
       stack.addOutputs({
