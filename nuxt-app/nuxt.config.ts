@@ -1,5 +1,13 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
+  nitro: {
+    preset: 'aws-lambda',
+    output: {
+      dir: '.output/nuxt-sst',
+      serverDir: '.output/nuxt-sst/server',
+      publicDir: '.output/nuxt-sst/client',
+    }
+  },
   devtools: { enabled: true },
   modules: [
     '@nuxt/ui'

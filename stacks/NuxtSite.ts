@@ -1,10 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { Function as CdkFunction } from "aws-cdk-lib/aws-lambda";
-
 import { SsrSite } from 'sst/constructs/SsrSite.js';
-import { SsrFunction } from "sst/constructs/SsrFunction.js";
-import { EdgeFunction } from "sst/constructs/EdgeFunction.js";
 
 /**
  * The `NuxtSite` construct is a higher level CDK construct that makes it easy to create a Nuxt app.
@@ -13,85 +9,100 @@ import { EdgeFunction } from "sst/constructs/EdgeFunction.js";
  *
  * ```js
  * new NuxtSite(stack, "web", {
- *   path: "my-Nuxt-app/",
+ *   path: "my-nuxt-app/",
  * });
  * ```
  */
 export class NuxtSite extends SsrSite {
-  protected initBuildConfig() {
-    return {
-        typesPath: "./",
-        serverBuildOutputFile: ".output/server/index.mjs",
-        clientBuildOutputDir: ".output/public",
-        clientBuildVersionedSubDir: "_nuxt",
-    };
-  }
 
-  protected validateBuildOutput() {
-    const serverDir = path.join(this.props.path, ".output/server");
-    const clientDir = path.join(this.props.path, ".output/public");
-    if (!fs.existsSync(serverDir) || !fs.existsSync(clientDir)) {
-        throw new Error(`Build output inside ".output/" does not contain the "server" and "public" folders. Make sure Server-side Rendering (SSR) is enabled in your Nuxt app. If you are looking to deploy the Nuxt app as a static site, please use the StaticSite construct — https://docs.sst.dev/constructs/StaticSite`);
-    }
-
-    super.validateBuildOutput();
-  }
-
-  protected createFunctionForRegional(): CdkFunction {
-    const {
-      runtime,
-      timeout,
-      memorySize,
-      permissions,
-      environment,
-      nodejs,
-      bind,
-      cdk,
-    } = this.props;
-    
-    const ssrFn = new SsrFunction(this, `ServerFunction`, {
+  protected plan() {
+    const { path: sitePath, edge } = this.props;
+    const serverDir = ".output/nuxt-sst/server";
+    const clientDir = ".output/nuxt-sst/client";
+    const serverConfig = {
       description: "Server handler for Nuxt",
-      handler: path.join(this.props.path, ".output", "server", "index.handler"),
-      runtime,
-      memorySize,
-      timeout,
-      nodejs: {
-        format: "esm",
-        ...nodejs,
-      },
-      bind,
-      environment,
-      permissions,
-      ...cdk?.server,
-    });
+      handler: path.join(sitePath, serverDir, "index.handler"),
+    };
 
-    return ssrFn.function;
+    return this.validatePlan({
+      buildId: JSON.parse(
+        fs
+          .readFileSync(path.join(sitePath, clientDir, "_nuxt/builds/latest.json"))
+          .toString()
+      ).id,
+      cloudFrontFunctions: {
+        serverCfFunction: {
+          constructId: "CloudFrontFunction",
+          injections: [ this.useCloudFrontFunctionHostHeaderInjection() ],
+        },
+      },
+      edgeFunctions: edge
+        ? {
+            edgeServer: {
+              constructId: "Server",
+              function: {
+                scopeOverride: this as NuxtSite,
+                ...serverConfig,
+              },
+            },
+          }
+        : undefined,
+      origins: {
+        ...(edge
+          ? {}
+          : {
+              regionalServer: {
+                type: "function",
+                constructId: "ServerFunction",
+                function: serverConfig,
+              },
+            }),
+        s3: {
+          type: "s3",
+          copy: [
+            {
+              from: clientDir,
+              to: "",
+              cached: true,
+              versionedSubDir: "_nuxt",
+            },
+          ],
+        },
+      },
+      behaviors: [
+        edge
+          ? {
+              cacheType: "server",
+              cfFunction: "serverCfFunction",
+              edgeFunction: "edgeServer",
+              origin: "s3",
+            }
+          : {
+              cacheType: "server",
+              cfFunction: "serverCfFunction",
+              origin: "regionalServer",
+            },
+        // create 1 behaviour for each top level asset file/folder
+        ...fs.readdirSync(path.join(sitePath, clientDir)).map(
+          (item) =>
+            ({
+              cacheType: "static",
+              pattern: fs
+                .statSync(path.join(sitePath, clientDir, item))
+                .isDirectory()
+                ? `${item}/*`
+                : item,
+              origin: "s3",
+            } as const)
+        ),
+      ],
+    });
   }
 
-  protected createFunctionForEdge(): EdgeFunction {
-    const {
-      runtime,
-      timeout,
-      memorySize,
-      bind,
-      permissions,
-      environment,
-      nodejs,
-    } = this.props;
-
-    return new EdgeFunction(this, `Server`, {
-      scopeOverride: this,
-      handler: path.join(this.props.path, ".output", "server", "index.handler"),
-      runtime,
-      timeout,
-      memorySize,
-      bind,
-      environment,
-      permissions,
-      nodejs: {
-        format: "esm",
-        ...nodejs,
-      },
-    });
+  public getConstructMetadata() {
+    return {
+      type: "NuxtSite" as const,
+      ...this.getConstructMetadataBase(),
+    };
   }
 }
